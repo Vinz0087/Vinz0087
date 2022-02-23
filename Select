@@ -1,0 +1,169 @@
+SELECT p_n_estrazione_id 
+, core.n_fattura_id 
+, core.n_ordine 
+, core.n_tipologia_documento_id 
+, core.c_codice_fornitore_sap 
+, core.n_regime_iva 
+, core.tipo --non riportare nel report
+, NULL soc
+, NULL data_doc
+, NULL data_reg
+, NULL tipo_doc
+, NULL gr_ledger
+, NULL divisa
+, NULL cambio
+, NULL num_doc
+, NULL riferimento
+, NULL testo
+, NULL calc_imp
+, core.cc
+, ( SELECT c_conto_coge_cip
+FROM mns_sap_conti_coge cc
+WHERE cc.c_tipo_voce = core.tipo )
+conto
+, NULL coge_sp
+, REPLACE( TO_CHAR( core.importo, 'FM9999999990D00' ), '.', ',' ) importo
+, ( SELECT ci.c_codice_iva
+FROM mns_sap_codici_iva ci
+WHERE ci.c_tipo_voce = core.tipo
+AND ci.n_regime_iva = core.n_regime_iva )
+ci
+, NULL rit1
+, NULL rit2
+, NULL rit3
+, NULL sc
+, core.cdc
+, NULL oi
+, NULL wbe
+, NULL prft_cntr_coge
+, NULL prft_cntr_clifor
+, NULL data_val
+, NULL data_bas
+, core.attribuzione
+, core.testo_pos
+, NULL cond_pag
+, NULL blocco_pag
+, NULL metodo_pag
+, NULL tipo_banca_prtnr
+, NULL soc_prtnr
+, NULL prft_cntr_prtnr
+, NULL xref1
+, NULL xref2
+, NULL xref3
+, NULL tipo_mov
+, CASE
+WHEN core.n_fattura_id <> NVL( LEAD( core.n_fattura_id, 1 )
+OVER ( ORDER BY core.n_fattura_id
+, core.n_ordine )
+, 0 ) THEN 'X'
+ELSE NULL
+END
+-- end
+FROM ( --dettaglio per singolo gettone (fattura e nota di credito)
+SELECT fat.n_fattura_id n_fattura_id
+, ROWNUM n_ordine
+, fat.n_tipologia_documento_id
+, fat.c_codice_fornitore_sap
+, fat.n_regime_iva
+, 'PROVVIGIONE' tipo
+, CASE WHEN ( fat.importo ) < 0 THEN 50 ELSE 40 END cc
+, ABS( fat.importo ) importo
+, 'AEN4000B99' cdc
+, TO_CHAR( fat.d_data_emissione, 'YYYY' ) || '_' || fat.c_id_fattura attribuzione
+, TO_CHAR( fat.d_data_emissione, 'FMMONTH_YYYY', 'NLS_DATE_LANGUAGE = ITALIAN' ) testo_pos
+FROM ( SELECT fati.n_fattura_id
+, fati.n_tipologia_documento_id
+, bp.c_codice_fornitore_sap
+, DECODE( fee.n_tipo_soggetto_id, 0, 0, bp.n_regime_iva ) n_regime_iva
+, fati.d_data_emissione
+, fati.c_id_fattura
+, SUM( cons.n_importo + cons.n_importo_storno ) importo
+FROM mns_fattura fati
+, mns_invito_fatturare invfat
+, mns_business_partner_s bp
+, mns_dati_consolidati cons
+, mns_fee fee
+WHERE fati.n_fattura_id = 26498
+AND fati.n_prefattura_id = invfat.n_invito_fatturare_id
+AND invfat.n_bp_id = bp.n_bp_id
+AND bp.n_liquidazione_id = invfat.n_bp_id
+AND fati.n_fattura_id = cons.n_fattura_id --da indicizzare
+AND cons.n_fee_id = fee.n_fee_id
+AND fee.n_tipo_fee_id <> 12
+AND fati.n_tipologia_documento_id IN (361, 362)
+GROUP BY fati.n_fattura_id
+, fati.n_tipologia_documento_id
+, bp.c_codice_fornitore_sap
+, DECODE( fee.n_tipo_soggetto_id, 0, 0, bp.n_regime_iva )
+, fati.d_data_emissione
+, fati.c_id_fattura) fat
+UNION ALL
+-- record di dettaglio per nota di debito fornitore
+SELECT fat.n_fattura_id n_fattura_id
+, ROWNUM n_ordine
+, fat.n_tipologia_documento_id
+, bp.c_codice_fornitore_sap
+, bp.n_regime_iva
+, DECODE( fisc.n_tipologia_id
+, 222, 'FIRR'
+, 223, 'INDENNITA'' SUPPLETIVA DI CLIENTELA'
+, 226, 'INDENNITA'' MERITOCRATICA'
+, 228, 'INDENNITA'' MANCATO PREAVVISO'
+, 229, 'INDENNITA'' RIPARAZIONE DANNI'
+, 230, 'INDENNITA'' PATTO NON CONCORRENZA'
+, 'XXXXXXXX' )
+tipo
+, CASE WHEN ( fisccons.n_importo_calcolato ) < 0 THEN 50 ELSE 40 END cc
+, ABS( ROUND(fisccons.n_importo_calcolato,2) ) importo
+, DECODE( fat.n_tipologia_documento_id, 363, 'AEN4000B99', NULL ) cdc
+, DECODE( fat.n_tipologia_documento_id, 361, TO_CHAR( fat.d_data_emissione, 'YYYY' ) || '/' || TRIM( TO_CHAR( CEIL( TO_NUMBER( TO_CHAR( fat.d_data_emissione, 'MM' ) ) / 3 ), 'RN' ) ), NULL ) attribuzione
+, DECODE( fisc.n_tipologia_id
+, 222, 'FIRR'
+, 223, 'INDENNITA'' SUPPLETIVA DI CLIENTELA'
+, 226, 'INDENNITA'' MERITOCRATICA'
+, 228, 'INDENNITA'' MANCATO PREAVVISO'
+, 229, 'INDENNITA'' RIPARAZIONE DANNI'
+, 230, 'INDENNITA'' PATTO NON CONCORRENZA'
+, 'XXXXXXXX' )
+testo_pos
+FROM mns_fattura fat
+, mns_invito_fatturare invfat
+, mns_business_partner_s bp
+, mns_dati_cons_fiscali fisccons
+, mns_prev_fiscali fisc
+WHERE fat.n_fattura_id = 26498
+AND fat.n_prefattura_id = invfat.n_invito_fatturare_id
+AND invfat.n_bp_id = bp.n_bp_id
+AND bp.n_liquidazione_id = invfat.n_liquidazione_id
+AND invfat.n_liquidazione_id = fisccons.n_liquidazione_id
+AND invfat.n_bp_id = fisccons.n_bp_id
+AND invfat.n_tipo_invito_id = fisccons.n_tipo_documento_id
+AND fisccons.n_prev_fiscali_id = fisc.n_prev_fiscali_id
+AND fat.n_tipologia_documento_id = 363
+AND fisc.n_tipologia_id IN (222, 223, 226, 228, 229, 230)
+AND fisccons.n_mandante_id = 0
+AND fisccons.n_tipologia_importo_id = 282
+AND fisc.f_delete = 0
+UNION ALL
+--dettaglio bollo (fattura, nota di credito e nota di debito)
+SELECT fat.n_fattura_id n_fattura_id
+, 9999 n_ordine
+, fat.n_tipologia_documento_id
+, bp.c_codice_fornitore_sap
+, bp.n_regime_iva
+, 'BOLLO' tipo
+, CASE WHEN ( fat.n_importo_bollo_fatturato ) < 0 THEN 50 ELSE 40 END cc
+, ABS( fat.n_importo_bollo_fatturato ) importo
+, 'AEN4000B99' cdc
+, DECODE( fat.n_tipologia_documento_id, 363, NULL, TO_CHAR( fat.d_data_emissione, 'YYYY' ) || '_' || fat.c_id_fattura ) attribuzione
+, DECODE( fat.n_tipologia_documento_id, 363, 'BOLLO', TO_CHAR( fat.d_data_emissione, 'FMMONTH_YYYY', 'NLS_DATE_LANGUAGE = ITALIAN' ) ) testo_pos
+FROM mns_fattura fat
+, mns_invito_fatturare invfat
+, mns_business_partner_s bp
+WHERE fat.n_fattura_id = 26498
+AND fat.n_prefattura_id = invfat.n_invito_fatturare_id
+AND invfat.n_bp_id = bp.n_bp_id
+AND bp.n_liquidazione_id = invfat.n_liquidazione_id
+AND fat.n_importo_bollo_fatturato > 0
+AND fat.n_tipologia_documento_id IN (361, 362, 363)) core
+ORDER BY core.n_ordine;
